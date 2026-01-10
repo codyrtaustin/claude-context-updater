@@ -1,0 +1,6 @@
+watchdog>=3.0.0
+
+# Optional: For Google Drive support
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.1.0
