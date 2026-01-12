@@ -6,6 +6,7 @@
   ],
   "output_file": "CLAUDE.md",
   "gdrive_folder_id": null,
+  "to_gdocs_folder_id": null,
   "gdrive_credentials_file": "gdrive_credentials.json",
   "gdrive_token_file": "gdrive_token.pickle",
   "gdrive_check_interval": 60

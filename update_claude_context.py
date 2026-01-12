@@ -25,7 +25,7 @@ try:
     from google_auth_oauthlib.flow import InstalledAppFlow
     from google.auth.transport.requests import Request
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseDownload
+    from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
     import pickle
     import io
     GDRIVE_AVAILABLE = True
@@ -242,20 +242,31 @@ class TextFileHandler(FileSystemEventHandler):
         return "\n".join(lines)
 
 
-def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', token_file: str = 'gdrive_token.pickle') -> Optional[object]:
+def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', token_file: str = 'gdrive_token.pickle', write_access: bool = False) -> Optional[object]:
     """Set up and return Google Drive service"""
     if not GDRIVE_AVAILABLE:
         print("⚠ Google Drive libraries not installed. Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
         return None
-    
-    SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+
+    # Use file scope for write access (allows creating/updating files)
+    if write_access:
+        SCOPES = ['https://www.googleapis.com/auth/drive.file']
+    else:
+        SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+
     creds = None
-    
+
     # Load existing token
     if os.path.exists(token_file):
         with open(token_file, 'rb') as token:
             creds = pickle.load(token)
-    
+
+        # Check if we need different scopes than what's stored
+        if write_access and creds and hasattr(creds, 'scopes'):
+            if 'https://www.googleapis.com/auth/drive.file' not in (creds.scopes or []):
+                print("⚠ Existing token doesn't have write access. Re-authenticating...")
+                creds = None
+
     # If no valid credentials, get user to authenticate
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -269,21 +280,235 @@ def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', toke
                 print("  3. Create OAuth 2.0 credentials")
                 print("  4. Download credentials as 'gdrive_credentials.json'")
                 return None
-            
+
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=0)
-        
+
         # Save credentials
         with open(token_file, 'wb') as token:
             pickle.dump(creds, token)
-    
+
     return build('drive', 'v3', credentials=creds)
+
+
+def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_id: str, preserve_structure: bool = True) -> dict:
+    """
+    Convert .txt files to Google Docs in the specified Google Drive folder.
+    If preserve_structure=True, recreates the subfolder structure in Google Drive.
+    Returns a dict with conversion results.
+    """
+    import tempfile
+
+    if not gdrive_service:
+        return {"error": "Google Drive service not available"}
+
+    results = {"converted": [], "updated": [], "skipped": [], "errors": []}
+
+    # Cache for folder IDs (folder_path -> gdrive_folder_id)
+    folder_cache = {"": target_folder_id}
+
+    def get_or_create_folder(folder_name: str, parent_id: str) -> str:
+        """Get existing folder or create new one in Google Drive"""
+        cache_key = f"{parent_id}/{folder_name}"
+        if cache_key in folder_cache:
+            return folder_cache[cache_key]
+
+        # Search for existing folder
+        try:
+            query = f"'{parent_id}' in parents and name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            response = gdrive_service.files().list(q=query, fields="files(id, name)").execute()
+            files = response.get('files', [])
+            if files:
+                folder_id = files[0]['id']
+                folder_cache[cache_key] = folder_id
+                return folder_id
+        except Exception as e:
+            print(f"⚠ Error searching for folder {folder_name}: {e}")
+
+        # Create new folder
+        try:
+            file_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [parent_id]
+            }
+            folder = gdrive_service.files().create(body=file_metadata, fields='id').execute()
+            folder_id = folder['id']
+            folder_cache[cache_key] = folder_id
+            print(f"📁 Created folder: {folder_name}")
+            return folder_id
+        except Exception as e:
+            print(f"✗ Error creating folder {folder_name}: {e}")
+            return parent_id
+
+    def clean_folder_name(name: str) -> str:
+        """Clean up folder names by removing TXT suffix and (1) etc."""
+        import re
+        # Remove " TXT" suffix
+        name = re.sub(r'\s+TXT$', '', name)
+        # Remove " (1)" or similar numbered suffixes
+        name = re.sub(r'\s+\(\d+\)$', '', name)
+        return name.strip()
+
+    def get_target_folder_id(txt_file: Path, source_root: Path) -> str:
+        """Determine the target folder ID based on file's relative path"""
+        if not preserve_structure:
+            return target_folder_id
+
+        try:
+            rel_path = txt_file.parent.relative_to(source_root)
+
+            # If file is directly in source_root, use source_root's name as target folder
+            if str(rel_path) == '.':
+                source_folder_name = clean_folder_name(source_root.name)
+                # Only create subfolder if source folder has a meaningful name
+                if source_folder_name and source_folder_name.lower() not in ['transcripts', '.']:
+                    return get_or_create_folder(source_folder_name, target_folder_id)
+                return target_folder_id
+
+            # Navigate/create folder hierarchy
+            current_folder_id = target_folder_id
+            for part in rel_path.parts:
+                clean_name = clean_folder_name(part)
+                current_folder_id = get_or_create_folder(clean_name, current_folder_id)
+            return current_folder_id
+        except ValueError:
+            return target_folder_id
+
+    def get_existing_docs_in_folder(folder_id: str) -> dict:
+        """Get existing Google Docs in a folder"""
+        existing = {}
+        try:
+            query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false"
+            response = gdrive_service.files().list(
+                q=query,
+                fields="files(id, name, modifiedTime)"
+            ).execute()
+            for doc in response.get('files', []):
+                existing[doc['name']] = doc
+        except Exception as e:
+            print(f"⚠ Error listing docs in folder: {e}")
+        return existing
+
+    # Process each source directory
+    for dir_path in source_dirs:
+        source_root = Path(dir_path)
+        if not source_root.exists():
+            print(f"⚠ Source directory not found: {dir_path}")
+            continue
+
+        # Find all .txt files
+        txt_files = list(source_root.rglob('*.txt')) + list(source_root.rglob('*.TXT'))
+        print(f"📂 Found {len(txt_files)} .txt files in {dir_path}")
+
+        # Group files by target folder for efficient batch checking
+        files_by_folder = {}
+        for txt_file in txt_files:
+            target_id = get_target_folder_id(txt_file, source_root)
+            if target_id not in files_by_folder:
+                files_by_folder[target_id] = []
+            files_by_folder[target_id].append(txt_file)
+
+        # Process each folder group
+        for folder_id, files in files_by_folder.items():
+            existing_docs = get_existing_docs_in_folder(folder_id)
+
+            for txt_file in files:
+                try:
+                    doc_name = txt_file.stem
+
+                    # Check if doc already exists and skip if so (no update needed)
+                    if doc_name in existing_docs:
+                        # Check if local file is newer than Google Doc
+                        existing_doc = existing_docs[doc_name]
+                        try:
+                            gdrive_time = datetime.fromisoformat(existing_doc['modifiedTime'].replace('Z', '+00:00'))
+                            local_time = datetime.fromtimestamp(txt_file.stat().st_mtime)
+                            # Make local_time timezone-aware for comparison
+                            from datetime import timezone
+                            local_time = local_time.replace(tzinfo=timezone.utc)
+                            if local_time <= gdrive_time:
+                                results["skipped"].append({"name": doc_name, "reason": "already up to date"})
+                                continue
+                        except Exception:
+                            pass  # If we can't compare times, update anyway
+
+                        # Delete old doc to replace with new content
+                        try:
+                            gdrive_service.files().delete(fileId=existing_doc['id']).execute()
+                        except Exception as e:
+                            print(f"⚠ Could not delete old doc {doc_name}: {e}")
+
+                    # Read the .txt file content
+                    with open(txt_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    # Create Google Doc with the content
+                    file_metadata = {
+                        'name': doc_name,
+                        'mimeType': 'application/vnd.google-apps.document',
+                        'parents': [folder_id]
+                    }
+
+                    # Write content to temp file for upload
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as tmp:
+                        tmp.write(content)
+                        tmp_path = tmp.name
+
+                    try:
+                        media = MediaFileUpload(tmp_path, mimetype='text/plain', resumable=True)
+
+                        # Retry logic for rate limiting
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                created_file = gdrive_service.files().create(
+                                    body=file_metadata,
+                                    media_body=media,
+                                    fields='id, name, webViewLink'
+                                ).execute()
+                                break
+                            except Exception as api_error:
+                                if attempt < max_retries - 1 and ('500' in str(api_error) or '503' in str(api_error) or 'rate' in str(api_error).lower()):
+                                    print(f"⏳ Rate limited, waiting 5 seconds...")
+                                    time.sleep(5)
+                                else:
+                                    raise api_error
+
+                        if doc_name in existing_docs:
+                            results["updated"].append({
+                                "name": doc_name,
+                                "source": str(txt_file),
+                                "link": created_file.get('webViewLink')
+                            })
+                            print(f"✓ Updated: {doc_name}")
+                        else:
+                            results["converted"].append({
+                                "name": doc_name,
+                                "source": str(txt_file),
+                                "link": created_file.get('webViewLink')
+                            })
+                            print(f"✓ Converted: {doc_name}")
+
+                        # Small delay to avoid rate limiting
+                        time.sleep(0.5)
+                    finally:
+                        os.unlink(tmp_path)
+
+                except Exception as e:
+                    results["errors"].append({
+                        "file": str(txt_file),
+                        "error": str(e)
+                    })
+                    print(f"✗ Error converting {txt_file}: {e}")
+
+    return results
 
 
 def main():
     """Main entry point"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description='Automatically update Claude project context from .txt files'
     )
@@ -308,10 +533,15 @@ def main():
         help='Google Drive folder ID to monitor (requires gdrive_credentials.json)'
     )
     parser.add_argument(
+        '--to-gdocs',
+        metavar='FOLDER_ID',
+        help='Convert .txt files to Google Docs in the specified Drive folder'
+    )
+    parser.add_argument(
         '--config',
         help='JSON configuration file path'
     )
-    
+
     args = parser.parse_args()
     
     # Load config if provided
@@ -324,8 +554,43 @@ def main():
     monitored_dirs = args.dirs if args.dirs != ['.'] else config.get('monitored_dirs', ['.'])
     output_file = args.output if args.output != 'CLAUDE.md' else config.get('output_file', 'CLAUDE.md')
     gdrive_folder_id = args.gdrive_folder_id or config.get('gdrive_folder_id')
-    
-    # Set up Google Drive if requested
+    to_gdocs_folder_id = args.to_gdocs or config.get('to_gdocs_folder_id')
+
+    # Handle --to-gdocs mode (convert .txt files to Google Docs)
+    if to_gdocs_folder_id:
+        print("📝 Converting .txt files to Google Docs...")
+        print(f"   Source directories: {', '.join(monitored_dirs)}")
+        print(f"   Target folder ID: {to_gdocs_folder_id}")
+        print("🔗 Setting up Google Drive connection (with write access)...")
+
+        gdrive_service = setup_gdrive_service(
+            config.get('gdrive_credentials_file', 'gdrive_credentials.json'),
+            config.get('gdrive_token_file', 'gdrive_token.pickle'),
+            write_access=True
+        )
+
+        if not gdrive_service:
+            print("✗ Failed to connect to Google Drive")
+            sys.exit(1)
+
+        print("✓ Google Drive connected")
+        results = convert_txt_to_gdocs(gdrive_service, monitored_dirs, to_gdocs_folder_id)
+
+        # Print summary
+        print(f"\n📊 Conversion Summary:")
+        print(f"   Converted: {len(results.get('converted', []))} files")
+        print(f"   Updated: {len(results.get('updated', []))} files")
+        print(f"   Skipped (already up to date): {len(results.get('skipped', []))} files")
+        print(f"   Errors: {len(results.get('errors', []))} files")
+
+        if results.get('converted') or results.get('updated'):
+            print("\n🔗 Google Docs links:")
+            for item in results.get('converted', []) + results.get('updated', []):
+                print(f"   {item['name']}: {item.get('link', 'N/A')}")
+
+        return
+
+    # Set up Google Drive if requested (read-only mode for monitoring)
     gdrive_service = None
     if gdrive_folder_id:
         print("🔗 Setting up Google Drive connection...")
