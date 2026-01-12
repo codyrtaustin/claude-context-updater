@@ -10,6 +10,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
+import webbrowser
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
@@ -29,9 +30,9 @@ class TranscriptSyncApp(rumps.App):
     def __init__(self):
         super(TranscriptSyncApp, self).__init__(
             "TranscriptSync",
-            icon=None,  # Will use text instead
+            icon=None,
             title="📝",
-            quit_button=None  # Custom quit button
+            quit_button=None
         )
 
         # Build menu
@@ -48,25 +49,27 @@ class TranscriptSyncApp(rumps.App):
             rumps.MenuItem("Quit", callback=self.quit_app),
         ]
 
-    @rumps.clicked("View Recent Syncs")
     def show_log_window(self, _):
         """Show recent sync activity in a window"""
         recent = self.get_recent_syncs()
-        if recent:
-            message = "\n".join(recent[-15:])  # Last 15 entries
-        else:
-            message = "No sync activity found yet.\n\nSyncs run at 8 AM and 5 PM daily."
 
+        if recent:
+            count = len(recent)
+            header = f"Last {count} sync{'s' if count > 1 else ''}:\n\n"
+            message = header + "\n".join(recent)
+        else:
+            message = "No sync activity found yet.\n\nSyncs run automatically at 8 AM and 5 PM daily."
+
+        # Use alert for read-only display (no text input)
         rumps.alert(
             title="Recent Transcript Syncs",
             message=message,
             ok="Close"
         )
 
-    @rumps.clicked("Sync Now")
     def run_sync_now(self, _):
         """Run conversion immediately"""
-        self.title = "🔄"  # Show syncing indicator
+        self.title = "🔄"
         rumps.notification(
             title="TranscriptSync",
             subtitle="Starting sync...",
@@ -74,19 +77,16 @@ class TranscriptSyncApp(rumps.App):
         )
 
         try:
-            # Run in background
             subprocess.Popen(
                 ["bash", str(CONVERSION_SCRIPT)],
                 cwd=str(SCRIPT_DIR),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-
-            # Reset icon after a delay (handled by timer)
             rumps.Timer(self.reset_icon, 5).start()
 
         except Exception as e:
-            rumps.alert(f"Error running sync: {e}")
+            rumps.alert(title="Sync Error", message=f"Error running sync:\n\n{e}", ok="Close")
             self.title = "📝"
 
     def reset_icon(self, _):
@@ -98,7 +98,6 @@ class TranscriptSyncApp(rumps.App):
             message="Check 'View Recent Syncs' for details"
         )
 
-    @rumps.clicked("Episode Counts")
     def show_counts(self, _):
         """Show episode counts per podcast"""
         counts = []
@@ -107,21 +106,20 @@ class TranscriptSyncApp(rumps.App):
         for name, path in GDOCS_FOLDERS.items():
             try:
                 if os.path.exists(path):
-                    # Count .gdoc files (excluding duplicates)
                     files = [f for f in os.listdir(path)
                              if f.endswith('.gdoc') and not re.search(r' \(\d+\)\.gdoc$', f)]
                     count = len(files)
                     total += count
-                    counts.append(f"  {name}: {count}")
+                    counts.append(f"{name}: {count}")
                 else:
-                    counts.append(f"  {name}: (folder not synced)")
-            except Exception as e:
-                counts.append(f"  {name}: (error)")
+                    counts.append(f"{name}: (folder not synced)")
+            except Exception:
+                counts.append(f"{name}: (error)")
 
-        message = "Episodes converted to Google Docs:\n\n" + "\n".join(counts) + f"\n\nTotal: {total}"
+        message = "Episodes converted to Google Docs:\n\n" + "\n".join(counts) + f"\n\n─────────────────\nTotal: {total}"
+
         rumps.alert(title="Episode Counts", message=message, ok="Close")
 
-    @rumps.clicked("Next Scheduled Run")
     def show_next_run(self, _):
         """Show next scheduled wake/run time"""
         try:
@@ -130,45 +128,39 @@ class TranscriptSyncApp(rumps.App):
                 capture_output=True,
                 text=True
             )
-            output = result.stdout
+            output = result.stdout.strip()
 
-            # Parse the schedule
-            lines = []
-            if "wakepoweron" in output.lower() or "wakeorpoweron" in output.lower():
-                for line in output.split('\n'):
-                    if 'wake' in line.lower() or 'poweron' in line.lower():
-                        lines.append(line.strip())
-
-            if lines:
-                message = "Scheduled wake times:\n\n" + "\n".join(lines)
+            if output:
+                message = output
             else:
                 message = "No wake schedule found.\n\nRun setup commands to enable auto-wake."
 
-            rumps.alert(title="Schedule", message=message, ok="Close")
+            rumps.alert(title="Wake Schedule", message=message, ok="Close")
 
         except Exception as e:
-            rumps.alert(f"Error checking schedule: {e}")
+            rumps.alert(title="Schedule Error", message=f"Error checking schedule:\n\n{e}", ok="Close")
 
-    @rumps.clicked("Open Log File")
     def open_log_file(self, _):
         """Open log file in Console"""
         if LOG_FILE.exists():
             subprocess.run(["open", "-a", "Console", str(LOG_FILE)])
         else:
-            rumps.alert("Log file not found", "No sync has run yet.")
+            rumps.notification(
+                title="TranscriptSync",
+                subtitle="Log not found",
+                message="No sync has run yet."
+            )
 
-    @rumps.clicked("Open Transcripts Folder")
     def open_transcripts(self, _):
         """Open transcripts folder in Finder"""
         subprocess.run(["open", "/Users/codyaustin/Documents/Katib/Transcripts"])
 
-    @rumps.clicked("Quit")
     def quit_app(self, _):
         """Quit the app"""
         rumps.quit_application()
 
     def get_recent_syncs(self):
-        """Parse log file for recent sync activity"""
+        """Parse log file for recent sync activity with file names"""
         if not LOG_FILE.exists():
             return []
 
@@ -177,44 +169,62 @@ class TranscriptSyncApp(rumps.App):
             with open(LOG_FILE, 'r') as f:
                 content = f.read()
 
-            # Find conversion entries
-            for match in re.finditer(
-                r'(\w+ \w+ \d+ [\d:]+)[^\n]*Starting scheduled run.*?'
-                r'(?:Converted: (\d+)|Updated: (\d+)|Skipped.*?: (\d+))?.*?'
-                r'Conversion complete',
-                content, re.DOTALL
-            ):
-                timestamp = match.group(1)
-                converted = match.group(2) or "0"
-                updated = match.group(3) or "0"
-                skipped = match.group(4) or "0"
+            # Split by run separators
+            runs = content.split("=" * 40)
 
-                # Format nicely
-                try:
-                    dt = datetime.strptime(timestamp, "%a %b %d %H:%M:%S")
-                    dt = dt.replace(year=datetime.now().year)
-                    formatted = dt.strftime("%b %d, %I:%M %p")
-                except:
-                    formatted = timestamp
+            for run in runs[-10:]:  # Last 10 runs
+                if not run.strip():
+                    continue
 
-                entries.append(f"✓ {formatted}")
+                lines = run.strip().split('\n')
+                timestamp = None
+                files = []
+                summary = None
 
-            # If no detailed entries, just show timestamps
-            if not entries:
-                for match in re.finditer(r'(\w+ \w+ \d+ [\d:]+)[^\n]*Starting scheduled run', content):
-                    timestamp = match.group(1)
-                    try:
-                        dt = datetime.strptime(timestamp, "%a %b %d %H:%M:%S")
-                        dt = dt.replace(year=datetime.now().year)
-                        formatted = dt.strftime("%b %d, %I:%M %p")
-                    except:
-                        formatted = timestamp
-                    entries.append(f"✓ {formatted}")
+                for line in lines:
+                    line = line.strip()
+
+                    # Get timestamp from "Starting scheduled run"
+                    if "Starting scheduled run" in line:
+                        match = re.match(r'^(\w+ \w+ \d+ [\d:]+)', line)
+                        if match:
+                            try:
+                                dt = datetime.strptime(match.group(1), "%a %b %d %H:%M:%S")
+                                dt = dt.replace(year=datetime.now().year)
+                                timestamp = dt.strftime("%b %d, %I:%M %p")
+                            except:
+                                timestamp = match.group(1)
+
+                    # Get converted/updated files
+                    elif "✓ Converted:" in line or "✓ Updated:" in line:
+                        # Extract file name
+                        match = re.search(r'✓ (?:Converted|Updated): (.+?)(?:\s+\(\d+/|$)', line)
+                        if match:
+                            files.append(match.group(1))
+
+                    # Get summary
+                    elif "Conversion complete -" in line:
+                        match = re.search(r'Converted: (\d+), Updated: (\d+), Skipped: (\d+)', line)
+                        if match:
+                            c, u, s = match.groups()
+                            summary = f"({c} new, {u} updated, {s} skipped)"
+
+                if timestamp:
+                    entry = f"\n📅 {timestamp}"
+                    if summary:
+                        entry += f" {summary}"
+                    if files:
+                        entry += "\n   " + "\n   ".join(files[:5])  # Show up to 5 files
+                        if len(files) > 5:
+                            entry += f"\n   ... and {len(files) - 5} more"
+                    elif summary and "(0 new, 0 updated" in summary:
+                        entry += "\n   (no new files)"
+                    entries.append(entry)
 
         except Exception as e:
             entries.append(f"Error reading log: {e}")
 
-        return entries
+        return entries if entries else ["No sync entries found in log."]
 
 
 if __name__ == "__main__":

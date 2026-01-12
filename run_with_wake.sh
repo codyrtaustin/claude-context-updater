@@ -8,14 +8,21 @@ LOG_FILE="/tmp/claude-context-updater.log"
 echo "========================================" >> "$LOG_FILE"
 echo "$(date): Starting scheduled run" >> "$LOG_FILE"
 
-# Run the actual conversion script
+# Run the actual conversion script and capture output
 cd "$SCRIPT_DIR"
-/usr/bin/python3 "$SCRIPT_DIR/update_claude_context.py" \
+OUTPUT=$(/usr/bin/python3 "$SCRIPT_DIR/update_claude_context.py" \
     --to-gdocs 12OpOoXU5px1kNRNjxfgDZbKNGgn9U_Ut \
-    --dirs /Users/codyaustin/Documents/Katib/Transcripts \
-    >> "$LOG_FILE" 2>&1
+    --dirs /Users/codyaustin/Documents/Katib/Transcripts 2>&1)
 
-echo "$(date): Conversion complete" >> "$LOG_FILE"
+# Log the output (contains file names)
+echo "$OUTPUT" >> "$LOG_FILE"
+
+# Extract and log summary
+CONVERTED=$(echo "$OUTPUT" | grep -c "✓ Converted:")
+UPDATED=$(echo "$OUTPUT" | grep -c "✓ Updated:")
+SKIPPED=$(echo "$OUTPUT" | grep -c "Skipped")
+
+echo "$(date): Conversion complete - Converted: $CONVERTED, Updated: $UPDATED, Skipped: $SKIPPED" >> "$LOG_FILE"
 
 # Calculate next wake time (8 AM or 5 PM)
 CURRENT_HOUR=$(date +%H)
