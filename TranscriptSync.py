@@ -17,13 +17,8 @@ SCRIPT_DIR = Path(__file__).parent
 LOG_FILE = Path("/tmp/claude-context-updater.log")
 CONVERSION_SCRIPT = SCRIPT_DIR / "run_with_wake.sh"
 
-# Google Drive folders to monitor
-GDOCS_FOLDERS = {
-    "Lenny's Podcast": "/Users/codyaustin/Documents/Katib/Transcripts/Lenny's Podcast Product  Career  Growth (2)",
-    "10x Recruiting": "/Users/codyaustin/Documents/Katib/Transcripts/10x Recruiting (1)",
-    "Offer Accepted": "/Users/codyaustin/Documents/Katib/Transcripts/Offer Accepted (1)",
-    "Pragmatic Engineer": "/Users/codyaustin/Documents/Katib/Transcripts/The Pragmatic Engineer (1)",
-}
+# Base transcripts folder - subfolders are detected automatically
+TRANSCRIPTS_BASE = "/Users/codyaustin/Documents/Katib/Transcripts"
 
 
 class TranscriptSyncApp(rumps.App):
@@ -99,24 +94,47 @@ class TranscriptSyncApp(rumps.App):
         )
 
     def show_counts(self, _):
-        """Show episode counts per podcast"""
+        """Show episode counts per podcast - dynamically detects folders"""
         counts = []
         total = 0
+        total_txt = 0
 
-        for name, path in GDOCS_FOLDERS.items():
-            try:
-                if os.path.exists(path):
-                    files = [f for f in os.listdir(path)
-                             if f.endswith('.gdoc') and not re.search(r' \(\d+\)\.gdoc$', f)]
-                    count = len(files)
-                    total += count
-                    counts.append(f"{name}: {count}")
-                else:
-                    counts.append(f"{name}: (folder not synced)")
-            except Exception:
-                counts.append(f"{name}: (error)")
+        try:
+            base = Path(TRANSCRIPTS_BASE)
+            if not base.exists():
+                rumps.alert(title="Episode Counts", message=f"Transcripts folder not found:\n{TRANSCRIPTS_BASE}", ok="Close")
+                return
 
-        message = "Episodes converted to Google Docs:\n\n" + "\n".join(counts) + f"\n\n─────────────────\nTotal: {total}"
+            # Find all subfolders
+            for folder in sorted(base.iterdir()):
+                if not folder.is_dir() or folder.name.startswith('.'):
+                    continue
+
+                # Check if it's a TXT source folder or GDocs folder
+                if folder.name.endswith(' TXT'):
+                    # Source TXT folder - count .txt files
+                    txt_count = len([f for f in folder.iterdir() if f.suffix.lower() == '.txt'])
+                    total_txt += txt_count
+                elif re.search(r' \(\d+\)$', folder.name):
+                    # GDocs synced folder (ends with (1), (2), etc.)
+                    # Get clean name
+                    clean_name = re.sub(r' \(\d+\)$', '', folder.name)
+                    # Shorten long names
+                    if len(clean_name) > 30:
+                        clean_name = clean_name[:27] + "..."
+
+                    gdoc_count = len([f for f in folder.iterdir()
+                                     if f.name.endswith('.gdoc') and not re.search(r' \(\d+\)\.gdoc$', f.name)])
+                    total += gdoc_count
+                    counts.append(f"{clean_name}: {gdoc_count}")
+
+            if counts:
+                message = "Episodes converted to Google Docs:\n\n" + "\n".join(counts) + f"\n\n─────────────────\nTotal: {total} Google Docs"
+            else:
+                message = "No converted podcasts found yet.\n\nAdd podcasts in Katib and run a sync."
+
+        except Exception as e:
+            message = f"Error reading folders: {e}"
 
         rumps.alert(title="Episode Counts", message=message, ok="Close")
 
@@ -153,7 +171,7 @@ class TranscriptSyncApp(rumps.App):
 
     def open_transcripts(self, _):
         """Open transcripts folder in Finder"""
-        subprocess.run(["open", "/Users/codyaustin/Documents/Katib/Transcripts"])
+        subprocess.run(["open", TRANSCRIPTS_BASE])
 
     def quit_app(self, _):
         """Quit the app"""
