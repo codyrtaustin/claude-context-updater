@@ -18,6 +18,11 @@ gdrive_token.pickle
 CLAUDE.md
 .gdrive_cache/
 
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
 # IDE
 .vscode/
 .idea/
