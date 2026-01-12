@@ -291,10 +291,11 @@ def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', toke
     return build('drive', 'v3', credentials=creds)
 
 
-def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_id: str, preserve_structure: bool = True) -> dict:
+def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_id: str, preserve_structure: bool = True, limit: int = 0) -> dict:
     """
     Convert .txt files to Google Docs in the specified Google Drive folder.
     If preserve_structure=True, recreates the subfolder structure in Google Drive.
+    If limit > 0, only convert that many files (useful for batch processing).
     Returns a dict with conversion results.
     """
     import tempfile
@@ -302,7 +303,8 @@ def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_i
     if not gdrive_service:
         return {"error": "Google Drive service not available"}
 
-    results = {"converted": [], "updated": [], "skipped": [], "errors": []}
+    results = {"converted": [], "updated": [], "skipped": [], "errors": [], "limit_reached": False}
+    converted_count = 0  # Track how many files we've actually converted/updated
 
     # Cache for folder IDs (folder_path -> gdrive_folder_id)
     folder_cache = {"": target_folder_id}
@@ -411,9 +413,17 @@ def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_i
 
         # Process each folder group
         for folder_id, files in files_by_folder.items():
+            if limit > 0 and converted_count >= limit:
+                results["limit_reached"] = True
+                break
+
             existing_docs = get_existing_docs_in_folder(folder_id)
 
             for txt_file in files:
+                # Check limit before processing each file
+                if limit > 0 and converted_count >= limit:
+                    results["limit_reached"] = True
+                    break
                 try:
                     doc_name = txt_file.stem
 
@@ -481,14 +491,16 @@ def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_i
                                 "source": str(txt_file),
                                 "link": created_file.get('webViewLink')
                             })
-                            print(f"✓ Updated: {doc_name}")
+                            converted_count += 1
+                            print(f"✓ Updated: {doc_name} ({converted_count}/{limit if limit > 0 else '∞'})")
                         else:
                             results["converted"].append({
                                 "name": doc_name,
                                 "source": str(txt_file),
                                 "link": created_file.get('webViewLink')
                             })
-                            print(f"✓ Converted: {doc_name}")
+                            converted_count += 1
+                            print(f"✓ Converted: {doc_name} ({converted_count}/{limit if limit > 0 else '∞'})")
 
                         # Small delay to avoid rate limiting
                         time.sleep(0.5)
@@ -541,6 +553,17 @@ def main():
         '--config',
         help='JSON configuration file path'
     )
+    parser.add_argument(
+        '--limit',
+        type=int,
+        default=0,
+        help='Limit number of files to convert (useful for batch processing, 0=unlimited)'
+    )
+    parser.add_argument(
+        '--no-subfolders',
+        action='store_true',
+        help='Put all files directly in target folder without creating subfolders'
+    )
 
     args = parser.parse_args()
     
@@ -574,7 +597,10 @@ def main():
             sys.exit(1)
 
         print("✓ Google Drive connected")
-        results = convert_txt_to_gdocs(gdrive_service, monitored_dirs, to_gdocs_folder_id)
+        if args.limit > 0:
+            print(f"   Limit: {args.limit} files per batch")
+        preserve_structure = not args.no_subfolders
+        results = convert_txt_to_gdocs(gdrive_service, monitored_dirs, to_gdocs_folder_id, preserve_structure=preserve_structure, limit=args.limit)
 
         # Print summary
         print(f"\n📊 Conversion Summary:")
@@ -582,6 +608,8 @@ def main():
         print(f"   Updated: {len(results.get('updated', []))} files")
         print(f"   Skipped (already up to date): {len(results.get('skipped', []))} files")
         print(f"   Errors: {len(results.get('errors', []))} files")
+        if results.get('limit_reached'):
+            print(f"   ⚠️  Limit of {args.limit} reached - run again to continue")
 
         if results.get('converted') or results.get('updated'):
             print("\n🔗 Google Docs links:")
