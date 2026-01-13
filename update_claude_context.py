@@ -317,7 +317,9 @@ def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_i
 
         # Search for existing folder
         try:
-            query = f"'{parent_id}' in parents and name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            # Escape apostrophes in folder name for the query
+            escaped_name = folder_name.replace("'", "\\'")
+            query = f"'{parent_id}' in parents and name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
             response = gdrive_service.files().list(q=query, fields="files(id, name)").execute()
             files = response.get('files', [])
             if files:

@@ -17,8 +17,8 @@ SCRIPT_DIR = Path(__file__).parent
 LOG_FILE = Path("/tmp/claude-context-updater.log")
 CONVERSION_SCRIPT = SCRIPT_DIR / "run_with_wake.sh"
 
-# Base transcripts folder - subfolders are detected automatically
-TRANSCRIPTS_BASE = "/Users/codyaustin/Documents/Katib/Transcripts"
+# Base podcasts folder - transcripts live alongside MP3s
+PODCASTS_BASE = "/Users/codyaustin/Documents/Katib/podcasts"
 
 
 class TranscriptSyncApp(rumps.App):
@@ -94,44 +94,40 @@ class TranscriptSyncApp(rumps.App):
         )
 
     def show_counts(self, _):
-        """Show episode counts per podcast - dynamically detects folders"""
+        """Show episode counts per podcast - counts transcripts in podcast folders"""
         counts = []
-        total = 0
         total_txt = 0
+        total_mp3 = 0
 
         try:
-            base = Path(TRANSCRIPTS_BASE)
+            base = Path(PODCASTS_BASE)
             if not base.exists():
-                rumps.alert(title="Episode Counts", message=f"Transcripts folder not found:\n{TRANSCRIPTS_BASE}", ok="Close")
+                rumps.alert(title="Episode Counts", message=f"Podcasts folder not found:\n{PODCASTS_BASE}", ok="Close")
                 return
 
-            # Find all subfolders
+            # Find all podcast subfolders
             for folder in sorted(base.iterdir()):
                 if not folder.is_dir() or folder.name.startswith('.'):
                     continue
 
-                # Check if it's a TXT source folder or GDocs folder
-                if folder.name.endswith(' TXT'):
-                    # Source TXT folder - count .txt files
-                    txt_count = len([f for f in folder.iterdir() if f.suffix.lower() == '.txt'])
-                    total_txt += txt_count
-                elif re.search(r' \(\d+\)$', folder.name):
-                    # GDocs synced folder (ends with (1), (2), etc.)
-                    # Get clean name
-                    clean_name = re.sub(r' \(\d+\)$', '', folder.name)
-                    # Shorten long names
-                    if len(clean_name) > 30:
-                        clean_name = clean_name[:27] + "..."
+                # Count .txt and .mp3 files in each podcast folder
+                txt_count = len([f for f in folder.iterdir() if f.suffix.lower() == '.txt'])
+                mp3_count = len([f for f in folder.iterdir() if f.suffix.lower() == '.mp3'])
 
-                    gdoc_count = len([f for f in folder.iterdir()
-                                     if f.name.endswith('.gdoc') and not re.search(r' \(\d+\)\.gdoc$', f.name)])
-                    total += gdoc_count
-                    counts.append(f"{clean_name}: {gdoc_count}")
+                total_txt += txt_count
+                total_mp3 += mp3_count
+
+                # Shorten long names
+                clean_name = folder.name
+                if len(clean_name) > 30:
+                    clean_name = clean_name[:27] + "..."
+
+                counts.append(f"{clean_name}: {txt_count}/{mp3_count}")
 
             if counts:
-                message = "Episodes converted to Google Docs:\n\n" + "\n".join(counts) + f"\n\n─────────────────\nTotal: {total} Google Docs"
+                message = "Transcripts per podcast (transcribed/total):\n\n" + "\n".join(counts) + f"\n\n─────────────────\nTotal: {total_txt} transcripts / {total_mp3} episodes"
             else:
-                message = "No converted podcasts found yet.\n\nAdd podcasts in Katib and run a sync."
+                message = "No podcasts found yet.\n\nAdd podcasts in Katib and download episodes."
 
         except Exception as e:
             message = f"Error reading folders: {e}"
@@ -170,8 +166,8 @@ class TranscriptSyncApp(rumps.App):
             )
 
     def open_transcripts(self, _):
-        """Open transcripts folder in Finder"""
-        subprocess.run(["open", TRANSCRIPTS_BASE])
+        """Open podcasts folder in Finder"""
+        subprocess.run(["open", PODCASTS_BASE])
 
     def quit_app(self, _):
         """Quit the app"""

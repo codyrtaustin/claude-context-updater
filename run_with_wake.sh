@@ -11,8 +11,8 @@ echo "$(date): Starting scheduled run" >> "$LOG_FILE"
 # Run the actual conversion script and capture output
 cd "$SCRIPT_DIR"
 OUTPUT=$(/usr/bin/python3 "$SCRIPT_DIR/update_claude_context.py" \
-    --to-gdocs 12OpOoXU5px1kNRNjxfgDZbKNGgn9U_Ut \
-    --dirs /Users/codyaustin/Documents/Katib/Transcripts 2>&1)
+    --to-gdocs 1Xk8AqldChn0G2KBdRepzTb-1czbSGry4 \
+    --dirs /Users/codyaustin/Documents/Katib/podcasts 2>&1)
 
 # Log the output (contains file names)
 echo "$OUTPUT" >> "$LOG_FILE"
