@@ -180,7 +180,7 @@ class TranscriptSyncApp(rumps.App):
 
         entries = []
         try:
-            with open(LOG_FILE, 'r') as f:
+            with open(LOG_FILE, 'r', encoding='utf-8') as f:
                 content = f.read()
 
             # Split by run separators
