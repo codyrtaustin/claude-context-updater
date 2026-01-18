@@ -10,25 +10,63 @@
 
 | File | Purpose |
 |------|---------|
-| `update_claude_context.py` | Main conversion script - .txt → Google Docs |
-| `run_with_wake.sh` | Wrapper that runs conversion + schedules next Mac wake |
-| `TranscriptSync.py` | Menu bar GUI app (📝 icon) |
+| `update_claude_context.py` | Main conversion script - .txt to Google Docs |
+| `transcriptsync_scheduled.sh` | Bash wrapper with venv, logging, notifications |
+| `transcriptsync_watchdog.sh` | Health monitor - auto-recovers missed runs |
+| `com.transcriptsync.plist` | LaunchAgent config for 9:30 AM and 5 PM runs |
+| `com.transcriptsync.watchdog.plist` | LaunchAgent for watchdog (every 30 min) |
+| `install_launchd.sh` | One-time installer for launchd setup |
+| `TranscriptSync.py` | Menu bar GUI app |
 | `setup_app.py` | py2app config to build .app bundle |
 | `cleanup_duplicates.py` | Utility to remove duplicate Google Docs |
 
 ## How It Works
 
-- **Scheduled runs:** 8 AM & 5 PM PT daily
-- **Mac wakes from sleep** automatically via `pmset`
-- **Source:** `/Users/codyaustin/Documents/Katib/Transcripts/` (all subfolders)
-- **Destination:** Google Drive folder ID `12OpOoXU5px1kNRNjxfgDZbKNGgn9U_Ut`
+- **Scheduled runs:** 9:30 AM and 5 PM PT daily via launchd
+- **Watchdog:** Runs every 30 min, auto-recovers if scheduled run missed
+- **Source:** `/Users/codyaustin/Documents/Katib/podcasts/` (all subfolders)
+- **Destination:** Google Drive folder ID `1Xk8AqldChn0G2KBdRepzTb-1czbSGry4`
 - **New podcasts:** Auto-detected when added via Katib (recursive scan)
+
+## Setup
+
+### Install LaunchAgents (one-time)
+```bash
+bash install_launchd.sh
+launchctl load ~/Library/LaunchAgents/com.transcriptsync.plist
+launchctl load ~/Library/LaunchAgents/com.transcriptsync.watchdog.plist
+```
 
 ## Development Commands
 
-### Navigate to Project
+### Run Manual Sync
 ```bash
-cd "/Users/codyaustin/Library/CloudStorage/GoogleDrive-codyrtaustin@gmail.com/My Drive/Claude Code/claude-context-updater"
+bash transcriptsync_scheduled.sh
+```
+
+### Check Logs
+```bash
+# Today's sync log
+cat logs/sync_$(date +%Y-%m-%d).log
+
+# Watchdog log
+cat logs/watchdog_$(date +%Y-%m-%d).log
+
+# Heartbeat (proves last successful run)
+cat logs/heartbeat_sync.txt
+```
+
+### Check LaunchAgent Status
+```bash
+launchctl list | grep transcriptsync
+```
+
+### Reload LaunchAgents (after plist changes)
+```bash
+launchctl unload ~/Library/LaunchAgents/com.transcriptsync.plist
+launchctl unload ~/Library/LaunchAgents/com.transcriptsync.watchdog.plist
+launchctl load ~/Library/LaunchAgents/com.transcriptsync.plist
+launchctl load ~/Library/LaunchAgents/com.transcriptsync.watchdog.plist
 ```
 
 ### Rebuild GUI App (after code changes)
@@ -41,36 +79,16 @@ cp -R dist/TranscriptSync.app /Applications/
 open /Applications/TranscriptSync.app
 ```
 
-### Run Manual Sync
-```bash
-bash run_with_wake.sh
-```
-
-### Check Logs
-```bash
-cat /tmp/claude-context-updater.log
-```
-
-### Check Wake Schedule
-```bash
-pmset -g sched
-```
-
-### Check Launch Agent Status
-```bash
-launchctl list | grep claude
-```
-
 ## Key Paths
 
 | What | Path |
 |------|------|
-| Transcripts source | `/Users/codyaustin/Documents/Katib/Transcripts/` |
-| Log file | `/tmp/claude-context-updater.log` |
-| Launch agent | `~/Library/LaunchAgents/com.claude.context-updater.plist` |
+| Transcripts source | `/Users/codyaustin/Documents/Katib/podcasts/` |
+| Log directory | `./logs/` |
+| LaunchAgents | `~/Library/LaunchAgents/com.transcriptsync*.plist` |
 | Installed app | `/Applications/TranscriptSync.app` |
 | Google credentials | `./gdrive_credentials.json` |
-| Google token | `./gdrive_token.pickle` (auto-generated on first auth) |
+| Virtual environment | `./venv/` |
 
 ## Dependencies
 
@@ -78,15 +96,24 @@ launchctl list | grep claude
 pip3 install watchdog google-api-python-client google-auth-httplib2 google-auth-oauthlib rumps py2app
 ```
 
+Or use the venv created by the installer:
+```bash
+source venv/bin/activate
+```
+
 ## Troubleshooting
 
 **App not syncing?**
-- Check `pmset -g sched` for wake schedule
-- Check `launchctl list | grep claude` for launch agent
-- Check `/tmp/claude-context-updater.log` for errors
+- Check `launchctl list | grep transcriptsync` for agent status
+- Check `logs/sync_$(date +%Y-%m-%d).log` for errors
+- Check `logs/heartbeat_sync.txt` for last successful run
 
 **Need to re-authenticate Google?**
 - Delete the token file and run script again
 
 **Menu bar app not showing?**
 - Run `open /Applications/TranscriptSync.app`
+
+**Watchdog not recovering?**
+- Check `logs/watchdog_$(date +%Y-%m-%d).log`
+- Verify agent loaded: `launchctl list | grep watchdog`

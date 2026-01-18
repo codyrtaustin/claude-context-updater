@@ -17,6 +17,7 @@ gdrive_token.pickle
 # Generated files
 CLAUDE.md
 .gdrive_cache/
+logs/
 
 # Build artifacts
 build/

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Wrapper script that runs the context updater and schedules the next wake time
-# Run times: 8 AM and 5 PM PT
+# Run times: 9:30 AM and 5 PM PT
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="/tmp/claude-context-updater.log"
@@ -10,7 +10,7 @@ echo "$(date): Starting scheduled run" >> "$LOG_FILE"
 
 # Run the actual conversion script and capture output
 cd "$SCRIPT_DIR"
-OUTPUT=$(/usr/bin/python3 "$SCRIPT_DIR/update_claude_context.py" \
+OUTPUT=$(/usr/local/bin/python3.11 "$SCRIPT_DIR/update_claude_context.py" \
     --to-gdocs 1Xk8AqldChn0G2KBdRepzTb-1czbSGry4 \
     --dirs /Users/codyaustin/Documents/Katib/podcasts 2>&1)
 
@@ -24,22 +24,23 @@ SKIPPED=$(echo "$OUTPUT" | grep -c "Skipped")
 
 echo "$(date): Conversion complete - Converted: $CONVERTED, Updated: $UPDATED, Skipped: $SKIPPED" >> "$LOG_FILE"
 
-# Calculate next wake time (8 AM or 5 PM)
-CURRENT_HOUR=$(date +%H)
+# Calculate next wake time (9:30 AM or 5 PM)
+CURRENT_MINUTES=$(($(date +%H) * 60 + $(date +%M)))
 CURRENT_DATE=$(date +%m/%d/%y)
 TOMORROW_DATE=$(date -v+1d +%m/%d/%y)
 
-if [ "$CURRENT_HOUR" -lt 8 ]; then
-    # Before 8 AM - next run is today at 8 AM
-    NEXT_WAKE_TIME="08:00:00"
+# 9:30 AM = 570 minutes, 5:00 PM = 1020 minutes
+if [ "$CURRENT_MINUTES" -lt 570 ]; then
+    # Before 9:30 AM - next run is today at 9:30 AM
+    NEXT_WAKE_TIME="09:30:00"
     NEXT_WAKE_DATE="$CURRENT_DATE"
-elif [ "$CURRENT_HOUR" -lt 17 ]; then
-    # Between 8 AM and 5 PM - next run is today at 5 PM
+elif [ "$CURRENT_MINUTES" -lt 1020 ]; then
+    # Between 9:30 AM and 5 PM - next run is today at 5 PM
     NEXT_WAKE_TIME="17:00:00"
     NEXT_WAKE_DATE="$CURRENT_DATE"
 else
-    # After 5 PM - next run is tomorrow at 8 AM
-    NEXT_WAKE_TIME="08:00:00"
+    # After 5 PM - next run is tomorrow at 9:30 AM
+    NEXT_WAKE_TIME="09:30:00"
     NEXT_WAKE_DATE="$TOMORROW_DATE"
 fi
 

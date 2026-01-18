@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.transcriptsync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/codyaustin/claude-context-updater/transcriptsync_scheduled.sh</string>
+    </array>
+
+    <!-- Run at 9:30 AM and 5:00 PM PT daily -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>17</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <!-- Environment variables (launchd has minimal environment) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Frameworks/Python.framework/Versions/3.11/bin</string>
+        <key>HOME</key>
+        <string>/Users/codyaustin</string>
+    </dict>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/Users/codyaustin/claude-context-updater/logs/launchd_sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/codyaustin/claude-context-updater/logs/launchd_sync_error.log</string>
+
+    <!-- Low priority -->
+    <key>Nice</key>
+    <integer>1</integer>
+
+    <!-- Don't run at load, only at scheduled times -->
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
