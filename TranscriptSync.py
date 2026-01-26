@@ -12,10 +12,10 @@ from datetime import datetime
 from pathlib import Path
 import webbrowser
 
-# Paths
-SCRIPT_DIR = Path(__file__).parent
-LOG_FILE = Path("/tmp/claude-context-updater.log")
-CONVERSION_SCRIPT = SCRIPT_DIR / "run_with_wake.sh"
+# Paths - use absolute paths since app bundle has different working directory
+PROJECT_DIR = Path("/Users/codyaustin/claude-context-updater")
+LOG_DIR = PROJECT_DIR / "logs"
+CONVERSION_SCRIPT = PROJECT_DIR / "transcriptsync_scheduled.sh"
 
 # Base podcasts folder - transcripts live alongside MP3s
 PODCASTS_BASE = "/Users/codyaustin/Documents/Katib/podcasts"
@@ -74,7 +74,7 @@ class TranscriptSyncApp(rumps.App):
         try:
             subprocess.Popen(
                 ["bash", str(CONVERSION_SCRIPT)],
-                cwd=str(SCRIPT_DIR),
+                cwd=str(PROJECT_DIR),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
@@ -156,14 +156,17 @@ class TranscriptSyncApp(rumps.App):
 
     def open_log_file(self, _):
         """Open log file in Console"""
-        if LOG_FILE.exists():
-            subprocess.run(["open", "-a", "Console", str(LOG_FILE)])
-        else:
-            rumps.notification(
-                title="TranscriptSync",
-                subtitle="Log not found",
-                message="No sync has run yet."
-            )
+        # Find most recent sync log
+        if LOG_DIR.exists():
+            log_files = sorted(LOG_DIR.glob("sync_*.log"), reverse=True)
+            if log_files:
+                subprocess.run(["open", "-a", "Console", str(log_files[0])])
+                return
+        rumps.notification(
+            title="TranscriptSync",
+            subtitle="Log not found",
+            message="No sync has run yet."
+        )
 
     def open_transcripts(self, _):
         """Open podcasts folder in Finder"""
@@ -174,71 +177,87 @@ class TranscriptSyncApp(rumps.App):
         rumps.quit_application()
 
     def get_recent_syncs(self):
-        """Parse log file for recent sync activity with file names"""
-        if not LOG_FILE.exists():
+        """Parse log files for recent sync activity with file names"""
+        if not LOG_DIR.exists():
             return []
 
-        entries = []
+        entries = []  # List of (datetime, entry_string) tuples
         try:
-            with open(LOG_FILE, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Get recent log files (last 5 days)
+            log_files = sorted(LOG_DIR.glob("sync_*.log"), reverse=True)[:5]
 
-            # Split by run separators
-            runs = content.split("=" * 40)
+            for log_file in log_files:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
 
-            for run in runs[-10:]:  # Last 10 runs
-                if not run.strip():
-                    continue
+                # Split by run separators (42 equals signs)
+                runs = content.split("=" * 42)
 
-                lines = run.strip().split('\n')
-                timestamp = None
-                files = []
-                summary = None
+                for run in runs:
+                    if not run.strip():
+                        continue
 
-                for line in lines:
-                    line = line.strip()
+                    lines = run.strip().split('\n')
+                    dt = None
+                    timestamp = None
+                    files = []
+                    converted = 0
+                    updated = 0
+                    skipped = 0
 
-                    # Get timestamp from "Starting scheduled run"
-                    if "Starting scheduled run" in line:
-                        match = re.match(r'^(\w+ \w+ \d+ [\d:]+)', line)
-                        if match:
-                            try:
-                                dt = datetime.strptime(match.group(1), "%a %b %d %H:%M:%S")
-                                dt = dt.replace(year=datetime.now().year)
-                                timestamp = dt.strftime("%b %d, %I:%M %p")
-                            except:
-                                timestamp = match.group(1)
+                    for line in lines:
+                        line = line.strip()
 
-                    # Get converted/updated files
-                    elif "✓ Converted:" in line or "✓ Updated:" in line:
-                        # Extract file name
-                        match = re.search(r'✓ (?:Converted|Updated): (.+?)(?:\s+\(\d+/|$)', line)
-                        if match:
-                            files.append(match.group(1))
+                        # Get timestamp from "Starting TranscriptSync scheduled run"
+                        if "Starting TranscriptSync" in line:
+                            match = re.match(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]', line)
+                            if match:
+                                try:
+                                    dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                                    timestamp = dt.strftime("%b %d, %I:%M %p")
+                                except:
+                                    timestamp = match.group(1)
+                                    dt = datetime.min
 
-                    # Get summary
-                    elif "Conversion complete -" in line:
-                        match = re.search(r'Converted: (\d+), Updated: (\d+), Skipped: (\d+)', line)
-                        if match:
-                            c, u, s = match.groups()
-                            summary = f"({c} new, {u} updated, {s} skipped)"
+                        # Get converted/updated files
+                        elif "✓ Converted:" in line or "✓ Updated:" in line:
+                            # Extract file name
+                            match = re.search(r'✓ (?:Converted|Updated): (.+?)(?:\s+\(\d+/|$)', line)
+                            if match:
+                                files.append(match.group(1))
 
-                if timestamp:
-                    entry = f"\n📅 {timestamp}"
-                    if summary:
-                        entry += f" {summary}"
-                    if files:
-                        entry += "\n   " + "\n   ".join(files[:5])  # Show up to 5 files
-                        if len(files) > 5:
-                            entry += f"\n   ... and {len(files) - 5} more"
-                    elif summary and "(0 new, 0 updated" in summary:
-                        entry += "\n   (no new files)"
-                    entries.append(entry)
+                        # Get summary from "Converted: X files" format
+                        elif "Converted:" in line and "files" in line:
+                            match = re.search(r'Converted: (\d+) files', line)
+                            if match:
+                                converted = int(match.group(1))
+                        elif "Updated:" in line and "files" in line:
+                            match = re.search(r'Updated: (\d+) files', line)
+                            if match:
+                                updated = int(match.group(1))
+                        elif "Skipped" in line and "files" in line:
+                            match = re.search(r'Skipped.*?: (\d+) files', line)
+                            if match:
+                                skipped = int(match.group(1))
+
+                    if timestamp and dt:
+                        summary = f"({converted} new, {updated} updated, {skipped} skipped)"
+                        entry = f"\n📅 {timestamp} {summary}"
+                        if files:
+                            entry += "\n   " + "\n   ".join(files[:5])
+                            if len(files) > 5:
+                                entry += f"\n   ... and {len(files) - 5} more"
+                        elif converted == 0 and updated == 0:
+                            entry += "\n   (no new files)"
+                        entries.append((dt, entry))
 
         except Exception as e:
-            entries.append(f"Error reading log: {e}")
+            return [f"Error reading log: {e}"]
 
-        return entries if entries else ["No sync entries found in log."]
+        # Sort by datetime descending (newest first), return just the entry strings
+        entries.sort(key=lambda x: x[0], reverse=True)
+        result = [entry for _, entry in entries[:10]]
+        return result if result else ["No sync entries found in log."]
 
 
 if __name__ == "__main__":
