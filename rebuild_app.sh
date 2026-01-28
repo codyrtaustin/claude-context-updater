@@ -15,7 +15,10 @@ sleep 1
 
 # Clean and rebuild
 rm -rf build dist
-python3 setup_app.py py2app
+python3 setup_app.py py2app || { echo "❌ Build failed"; exit 1; }
+
+# Verify build output exists
+[ -d dist/TranscriptSync.app ] || { echo "❌ Build output not found"; exit 1; }
 
 # Install to /Applications
 rm -rf /Applications/TranscriptSync.app

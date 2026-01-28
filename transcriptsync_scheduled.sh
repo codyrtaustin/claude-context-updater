@@ -28,6 +28,12 @@ if [ -z "$PYTHON_PATH" ]; then
     done
 fi
 
+# Fail early if no Python found
+if [ -z "$PYTHON_PATH" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Python 3 not found in common locations" >&2
+    exit 1
+fi
+
 # Google Drive target folder ID - can be overridden via environment
 GDRIVE_FOLDER_ID="${TRANSCRIPTSYNC_GDRIVE_FOLDER_ID:-1Xk8AqldChn0G2KBdRepzTb-1czbSGry4}"
 SOURCE_DIR="${TRANSCRIPTSYNC_SOURCE_DIR:-/Users/codyaustin/Documents/Katib/podcasts}"
