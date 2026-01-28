@@ -244,6 +244,8 @@ class TextFileHandler(FileSystemEventHandler):
 
 def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', token_file: str = 'gdrive_token.json', write_access: bool = False) -> Optional[object]:
     """Set up and return Google Drive service"""
+    import pickle  # Only imported here for backwards compatibility migration
+
     if not GDRIVE_AVAILABLE:
         print("⚠ Google Drive libraries not installed. Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
         return None
@@ -255,13 +257,26 @@ def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', toke
         SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
     creds = None
+    pickle_file = token_file.replace('.json', '.pickle')
 
-    # Load existing token from JSON file
+    # Load existing token from JSON file (preferred)
     if os.path.exists(token_file):
         try:
             creds = Credentials.from_authorized_user_file(token_file, SCOPES)
         except (ValueError, KeyError) as e:
             print(f"⚠ Could not load token from {token_file}: {e}")
+            creds = None
+    # Fall back to pickle file for backwards compatibility
+    elif os.path.exists(pickle_file):
+        try:
+            with open(pickle_file, 'rb') as f:
+                creds = pickle.load(f)
+            print(f"ℹ Migrating credentials from {pickle_file} to {token_file}")
+            # Save as JSON immediately for future use
+            with open(token_file, 'w') as token:
+                token.write(creds.to_json())
+        except Exception as e:
+            print(f"⚠ Could not load token from {pickle_file}: {e}")
             creds = None
 
     # Check if we need different scopes than what's stored
