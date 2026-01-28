@@ -13,6 +13,8 @@ ENV/
 config.json
 gdrive_credentials.json
 gdrive_token.pickle
+gdrive_token.json
+gdrive_token_cleanup.json
 
 # Generated files
 CLAUDE.md
