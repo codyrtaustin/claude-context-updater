@@ -6,7 +6,6 @@ from a Google Drive folder.
 
 import os
 import re
-import pickle
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -15,15 +14,21 @@ from googleapiclient.discovery import build
 
 def setup_gdrive_service():
     """Set up and return Google Drive service"""
+    # Note: Full drive scope required because duplicates like "file (1)" are created
+    # by Google Drive itself, not by our app, so drive.file scope won't work
     SCOPES = ['https://www.googleapis.com/auth/drive']
     creds = None
 
-    token_file = 'gdrive_token.pickle'
+    token_file = 'gdrive_token_cleanup.json'
     credentials_file = 'gdrive_credentials.json'
 
+    # Load existing token from JSON
     if os.path.exists(token_file):
-        with open(token_file, 'rb') as token:
-            creds = pickle.load(token)
+        try:
+            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+        except (ValueError, KeyError) as e:
+            print(f"⚠ Could not load token: {e}")
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -32,8 +37,9 @@ def setup_gdrive_service():
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=0)
 
-        with open(token_file, 'wb') as token:
-            pickle.dump(creds, token)
+        # Save credentials in JSON format
+        with open(token_file, 'w') as token:
+            token.write(creds.to_json())
 
     return build('drive', 'v3', credentials=creds)
 
@@ -147,14 +153,16 @@ def main():
 
     parser = argparse.ArgumentParser(description='Remove duplicate Google Docs files')
     parser.add_argument('--folder-id', help='Google Drive folder ID to clean up')
-    parser.add_argument('--folder-name', default="Lenny's Podcast Product  Career  Growth",
-                        help='Folder name to search for')
+    parser.add_argument('--folder-name', help='Folder name to search for (required if --folder-id not provided)')
     parser.add_argument('--delete', action='store_true',
                         help='Actually delete files (default is dry run)')
     parser.add_argument('--debug', action='store_true',
                         help='Show debug info about file names')
 
     args = parser.parse_args()
+
+    if not args.folder_id and not args.folder_name:
+        parser.error("Either --folder-id or --folder-name is required")
 
     print("Connecting to Google Drive...")
     service = setup_gdrive_service()

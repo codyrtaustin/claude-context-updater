@@ -12,13 +12,14 @@ from datetime import datetime
 from pathlib import Path
 import webbrowser
 
-# Paths - use absolute paths since app bundle has different working directory
-PROJECT_DIR = Path("/Users/codyaustin/claude-context-updater")
+# Paths - use environment variables with fallbacks for portability
+# Set TRANSCRIPTSYNC_PROJECT_DIR and TRANSCRIPTSYNC_PODCASTS_DIR to override defaults
+PROJECT_DIR = Path(os.environ.get("TRANSCRIPTSYNC_PROJECT_DIR", "/Users/codyaustin/claude-context-updater"))
 LOG_DIR = PROJECT_DIR / "logs"
 CONVERSION_SCRIPT = PROJECT_DIR / "transcriptsync_scheduled.sh"
 
 # Base podcasts folder - transcripts live alongside MP3s
-PODCASTS_BASE = "/Users/codyaustin/Documents/Katib/podcasts"
+PODCASTS_BASE = os.environ.get("TRANSCRIPTSYNC_PODCASTS_DIR", "/Users/codyaustin/Documents/Katib/podcasts")
 
 
 class TranscriptSyncApp(rumps.App):
@@ -215,7 +216,7 @@ class TranscriptSyncApp(rumps.App):
                                 try:
                                     dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
                                     timestamp = dt.strftime("%b %d, %I:%M %p")
-                                except:
+                                except ValueError:
                                     timestamp = match.group(1)
                                     dt = datetime.min
 

@@ -26,7 +26,6 @@ try:
     from google.auth.transport.requests import Request
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
-    import pickle
     import io
     GDRIVE_AVAILABLE = True
 except ImportError:
@@ -156,7 +155,8 @@ class TextFileHandler(FileSystemEventHandler):
             gdrive_time = datetime.fromisoformat(gdrive_item['modifiedTime'].replace('Z', '+00:00'))
             local_time = datetime.fromtimestamp(local_file.stat().st_mtime)
             return gdrive_time > local_time
-        except:
+        except (ValueError, KeyError, OSError) as e:
+            print(f"⚠ Could not compare file timestamps: {e}")
             return True
     
     def download_gdrive_file(self, file_id: str, dest_path: Path):
@@ -242,7 +242,7 @@ class TextFileHandler(FileSystemEventHandler):
         return "\n".join(lines)
 
 
-def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', token_file: str = 'gdrive_token.pickle', write_access: bool = False) -> Optional[object]:
+def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', token_file: str = 'gdrive_token.json', write_access: bool = False) -> Optional[object]:
     """Set up and return Google Drive service"""
     if not GDRIVE_AVAILABLE:
         print("⚠ Google Drive libraries not installed. Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
@@ -256,16 +256,19 @@ def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', toke
 
     creds = None
 
-    # Load existing token
+    # Load existing token from JSON file
     if os.path.exists(token_file):
-        with open(token_file, 'rb') as token:
-            creds = pickle.load(token)
+        try:
+            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+        except (ValueError, KeyError) as e:
+            print(f"⚠ Could not load token from {token_file}: {e}")
+            creds = None
 
-        # Check if we need different scopes than what's stored
-        if write_access and creds and hasattr(creds, 'scopes'):
-            if 'https://www.googleapis.com/auth/drive.file' not in (creds.scopes or []):
-                print("⚠ Existing token doesn't have write access. Re-authenticating...")
-                creds = None
+    # Check if we need different scopes than what's stored
+    if write_access and creds and hasattr(creds, 'scopes'):
+        if 'https://www.googleapis.com/auth/drive.file' not in (creds.scopes or []):
+            print("⚠ Existing token doesn't have write access. Re-authenticating...")
+            creds = None
 
     # If no valid credentials, get user to authenticate
     if not creds or not creds.valid:
@@ -284,9 +287,9 @@ def setup_gdrive_service(credentials_file: str = 'gdrive_credentials.json', toke
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=0)
 
-        # Save credentials
-        with open(token_file, 'wb') as token:
-            pickle.dump(creds, token)
+        # Save credentials in JSON format (more secure than pickle)
+        with open(token_file, 'w') as token:
+            token.write(creds.to_json())
 
     return build('drive', 'v3', credentials=creds)
 
@@ -434,16 +437,15 @@ def convert_txt_to_gdocs(gdrive_service, source_dirs: List[str], target_folder_i
                         # Check if local file is newer than Google Doc
                         existing_doc = existing_docs[doc_name]
                         try:
-                            gdrive_time = datetime.fromisoformat(existing_doc['modifiedTime'].replace('Z', '+00:00'))
-                            local_time = datetime.fromtimestamp(txt_file.stat().st_mtime)
-                            # Make local_time timezone-aware for comparison
                             from datetime import timezone
-                            local_time = local_time.replace(tzinfo=timezone.utc)
+                            gdrive_time = datetime.fromisoformat(existing_doc['modifiedTime'].replace('Z', '+00:00'))
+                            # Get local file mtime as UTC for proper comparison
+                            local_time = datetime.fromtimestamp(txt_file.stat().st_mtime, tz=timezone.utc)
                             if local_time <= gdrive_time:
                                 results["skipped"].append({"name": doc_name, "reason": "already up to date"})
                                 continue
-                        except Exception:
-                            pass  # If we can't compare times, update anyway
+                        except (ValueError, KeyError, OSError) as e:
+                            print(f"⚠ Could not compare timestamps for {doc_name}, will update: {e}")
 
                         # Delete old doc to replace with new content
                         try:
@@ -590,7 +592,7 @@ def main():
 
         gdrive_service = setup_gdrive_service(
             config.get('gdrive_credentials_file', 'gdrive_credentials.json'),
-            config.get('gdrive_token_file', 'gdrive_token.pickle'),
+            config.get('gdrive_token_file', 'gdrive_token.json'),
             write_access=True
         )
 
@@ -626,7 +628,7 @@ def main():
         print("🔗 Setting up Google Drive connection...")
         gdrive_service = setup_gdrive_service(
             config.get('gdrive_credentials_file', 'gdrive_credentials.json'),
-            config.get('gdrive_token_file', 'gdrive_token.pickle')
+            config.get('gdrive_token_file', 'gdrive_token.json')
         )
         if gdrive_service:
             print("✓ Google Drive connected")
